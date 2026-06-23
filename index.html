@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#3B82F6">
+    <meta name="description" content="App para controlar gastos e ingresos">
+    <meta name="application-name" content="Control de Gastos">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Gastos">
+    
+    <title>Control de Gastos</title>
+    
+    <!-- Inline Manifest -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://www.w3.org/ns/pwa",
+        "name": "Control de Gastos",
+        "short_name": "Gastos",
+        "description": "App para controlar gastos e ingresos con OCR",
+        "start_url": "./",
+        "scope": "./",
+        "display": "standalone",
+        "theme_color": "#3B82F6",
+        "background_color": "#FFFFFF"
+    }
+    </script>
+    
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%233B82F6' width='192' height='192' rx='45'/><text x='96' y='110' dominant-baseline='middle' text-anchor='middle' font-size='100' fill='white' font-family='Arial'>💰</text></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%233B82F6' width='192' height='192' rx='45'/><text x='96' y='110' dominant-baseline='middle' text-anchor='middle' font-size='100' fill='white' font-family='Arial'>💰</text></svg>">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #F9FAFB;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        body {
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <!-- Service Worker Inline -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            const swCode = `
+                const CACHE = 'v1';
+                self.addEventListener('install', e => self.skipWaiting());
+                self.addEventListener('activate', e => self.clients.claim());
+                self.addEventListener('fetch', e => {
+                    e.respondWith(
+                        caches.match(e.request).then(r => r || fetch(e.request).then(r => {
+                            if(!r || r.status !== 200) return r;
+                            const c = r.clone();
+                            caches.open(CACHE).then(cache => cache.put(e.request, c));
+                            return r;
+                        }).catch(() => caches.match(e.request)))
+                    );
+                });
+            `;
+            navigator.serviceWorker.register(
+                'data:application/javascript;charset=utf-8,' + encodeURIComponent(swCode)
+            ).catch(e => console.log('SW error:', e));
+        }
+    </script>
+    
+    <!-- React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- App -->
+    <script>
+        const { useState, useEffect, useRef } = React;
+
+        const GastoApp = () => {
+            const [view, setView] = useState('dashboard');
+            const [ingresos, setIngresos] = useState([]);
+            const [gastos, setGastos] = useState([]);
+            const [categorias, setCategorias] = useState(['Comida', 'Gym', 'Meriendas', 'Figuritas', 'Transporte', 'Ropa', 'Salud', 'Otro']);
+            
+            const [montoIngreso, setMontoIngreso] = useState('');
+            const [montoGasto, setMontoGasto] = useState('');
+            const [descripcion, setDescripcion] = useState('');
+            const [categoria, setCategoria] = useState('Comida');
+            const [nuevaCategoria, setNuevaCategoria] = useState('');
+            const [mostrarCamara, setMostrarCamara] = useState(false);
+            const [foto, setFoto] = useState(null);
+            
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+
+            useEffect(() => {
+                const g = localStorage.getItem('gastos');
+                const i = localStorage.getItem('ingresos');
+                const c = localStorage.getItem('categorias');
+                if (g) setGastos(JSON.parse(g));
+                if (i) setIngresos(JSON.parse(i));
+                if (c) setCategorias(JSON.parse(c));
+            }, []);
+
+            useEffect(() => localStorage.setItem('gastos', JSON.stringify(gastos)), [gastos]);
+            useEffect(() => localStorage.setItem('ingresos', JSON.stringify(ingresos)), [ingresos]);
+            useEffect(() => localStorage.setItem('categorias', JSON.stringify(categorias)), [categorias]);
+
+            const iniciarCamara = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                    videoRef.current.srcObject = stream;
+                    setMostrarCamara(true);
+                } catch (e) {
+                    alert('❌ Sin acceso a cámara');
+                }
+            };
+
+            const tomarFoto = () => {
+                const canvas = canvasRef.current;
+                const context = canvas.getContext('2d');
+                canvas.width = videoRef.current.videoWidth;
+                canvas.height = videoRef.current.videoHeight;
+                context.drawImage(videoRef.current, 0, 0);
+                setFoto(canvas.toDataURL('image/jpeg'));
+                const stream = videoRef.current.srcObject;
+                if (stream) stream.getTracks().forEach(t => t.stop());
+                setMostrarCamara(false);
+            };
+
+            const procesarOCR = () => {
+                const monto = prompt('Ingresa el monto:');
+                if (monto && !isNaN(parseFloat(monto))) {
+                    setMontoGasto(parseFloat(monto).toFixed(2));
+                    setDescripcion('Gasto del ticket');
+                }
+            };
+
+            const agregarIngreso = () => {
+                if (!montoIngreso || parseFloat(montoIngreso) <= 0) {
+                    alert('⚠️ Monto inválido');
+                    return;
+                }
+                setIngresos([...ingresos, {
+                    id: Date.now(),
+                    monto: parseFloat(montoIngreso),
+                    fecha: new Date().toLocaleDateString('es-AR'),
+                    fechaObj: new Date()
+                }]);
+                setMontoIngreso('');
+                alert('✅ Agregado');
+            };
+
+            const agregarGasto = () => {
+                if (!montoGasto || parseFloat(montoGasto) <= 0) {
+                    alert('⚠️ Monto inválido');
+                    return;
+                }
+                setGastos([...gastos, {
+                    id: Date.now(),
+                    monto: parseFloat(montoGasto),
+                    descripcion: descripcion || 'Sin descripción',
+                    categoria: categoria,
+                    fecha: new Date().toLocaleDateString('es-AR'),
+                    fechaObj: new Date(),
+                    foto: foto
+                }]);
+                setMontoGasto('');
+                setDescripcion('');
+                setFoto(null);
+                setCategoria('Comida');
+                alert('✅ Guardado');
+            };
+
+            const agregarCategoria = () => {
+                if (nuevaCategoria.trim() && !categorias.includes(nuevaCategoria)) {
+                    setCategorias([...categorias, nuevaCategoria]);
+                    setNuevaCategoria('');
+                    alert('✅ Agregada');
+                }
+            };
+
+            const eliminarGasto = (id) => {
+                if (window.confirm('¿Eliminar?')) {
+                    setGastos(gastos.filter(g => g.id !== id));
+                }
+            };
+
+            const eliminarIngreso = (id) => {
+                if (window.confirm('¿Eliminar?')) {
+                    setIngresos(ingresos.filter(i => i.id !== id));
+                }
+            };
+
+            const mesActual = () => {
+                const d = new Date();
+                return d.getMonth() + 1 + '-' + d.getFullYear();
+            };
+
+            const formatoFecha = (f) => f.getMonth() + 1 + '-' + f.getFullYear();
+
+            const gastosMes = gastos.filter(g => formatoFecha(g.fechaObj) === mesActual());
+            const ingresosMes = ingresos.filter(i => formatoFecha(i.fechaObj) === mesActual());
+
+            const totalIngresos = ingresosMes.reduce((s, i) => s + i.monto, 0);
+            const totalGastos = gastosMes.reduce((s, g) => s + g.monto, 0);
+            const saldo = totalIngresos - totalGastos;
+
+            const gastosPorCategoria = {};
+            categorias.forEach(cat => {
+                gastosPorCategoria[cat] = gastosMes.filter(g => g.categoria === cat).reduce((s, g) => s + g.monto, 0);
+            });
+
+            const s = {
+                container: { maxWidth: '480px', margin: '0 auto', padding: '16px', minHeight: '100vh', backgroundColor: '#F9FAFB', fontFamily: 'inherit' },
+                header: { marginBottom: '24px', paddingBottom: '16px', borderBottom: '3px solid #3B82F6' },
+                titulo: { fontSize: '32px', fontWeight: '700', margin: '0 0 8px 0', color: '#1F2937' },
+                subtitulo: { fontSize: '13px', color: '#6B7280', margin: '0' },
+                grid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '24px' },
+                card: { padding: '16px', borderRadius: '12px', color: 'white', textAlign: 'center' },
+                cardGreen: { backgroundColor: '#10B981' },
+                cardRed: { backgroundColor: '#EF4444' },
+                cardBlue: { backgroundColor: '#3B82F6' },
+                monto: { fontSize: '24px', fontWeight: '700', marginBottom: '4px' },
+                boton: { padding: '12px 16px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', width: '100%', marginBottom: '12px' },
+                btnPrimary: { backgroundColor: '#3B82F6', color: 'white' },
+                btnSecondary: { backgroundColor: '#E5E7EB', color: '#374151' },
+                form: { backgroundColor: 'white', padding: '20px', borderRadius: '12px', marginBottom: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
+                grupo: { marginBottom: '16px' },
+                label: { display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '6px' },
+                input: { width: '100%', padding: '10px 12px', border: '1px solid #D1D5DB', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' },
+                select: { width: '100%', padding: '10px 12px', border: '1px solid #D1D5DB', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit', backgroundColor: 'white' },
+                lista: { backgroundColor: 'white', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
+                item: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #F3F4F6' },
+                categoria: { fontSize: '13px', fontWeight: '600', color: '#3B82F6', marginBottom: '2px' },
+                fecha: { fontSize: '12px', color: '#9CA3AF' },
+                montoItem: { fontSize: '14px', fontWeight: '700', color: '#DC2626' },
+                btnBack: { padding: '8px 12px', backgroundColor: 'transparent', border: 'none', color: '#3B82F6', fontWeight: '600', cursor: 'pointer', marginBottom: '16px', fontSize: '14px' },
+                video: { width: '100%', height: 'auto', display: 'block', transform: 'scaleX(-1)', marginBottom: '12px' },
+                img: { width: '100%', height: 'auto', borderRadius: '8px', marginBottom: '12px' },
+            };
+
+            if (view === 'dashboard') {
+                return React.createElement('div', { style: s.container },
+                    React.createElement('div', { style: s.header },
+                        React.createElement('h1', { style: s.titulo }, '💰 Gastos'),
+                        React.createElement('p', { style: s.subtitulo }, 'Control offline')
+                    ),
+                    React.createElement('div', { style: s.grid },
+                        React.createElement('div', { style: { ...s.card, ...s.cardGreen } }, React.createElement('div', null, 'Ingresos'), React.createElement('div', { style: s.monto }, '$' + totalIngresos.toFixed(2))),
+                        React.createElement('div', { style: { ...s.card, ...s.cardRed } }, React.createElement('div', null, 'Gastos'), React.createElement('div', { style: s.monto }, '$' + totalGastos.toFixed(2))),
+                        React.createElement('div', { style: { ...s.card, ...s.cardBlue } }, React.createElement('div', null, 'Saldo'), React.createElement('div', { style: { ...s.monto, color: saldo >= 0 ? '#059669' : '#DC2626' } }, '$' + saldo.toFixed(2)))
+                    ),
+                    React.createElement('button', { style: { ...s.boton, ...s.btnPrimary }, onClick: () => setView('gasto') }, '➕ Gasto'),
+                    React.createElement('button', { style: { ...s.boton, ...s.btnSecondary }, onClick: () => setView('ingreso') }, '💵 Ingreso'),
+                    React.createElement('button', { style: { ...s.boton, ...s.btnSecondary }, onClick: () => setView('reportes') }, '📊 Reportes'),
+                    React.createElement('div', null, React.createElement('h2', { style: { fontSize: '18px', fontWeight: '600', marginBottom: '12px' } }, 'Últimos'), React.createElement('div', { style: s.lista }, gastosMes.length > 0 ? gastosMes.slice(-5).reverse().map(g => React.createElement('div', { key: g.id, style: s.item }, React.createElement('div', null, React.createElement('div', { style: s.categoria }, g.categoria), React.createElement('div', { style: s.fecha }, g.fecha)), React.createElement('div', { style: s.montoItem }, '-$' + g.monto.toFixed(2)))) : React.createElement('p', { style: { padding: '20px', textAlign: 'center', color: '#9CA3AF' } }, 'Sin gastos')))
+                );
+            }
+
+            if (view === 'gasto') {
+                return React.createElement('div', { style: s.container },
+                    React.createElement('button', { style: s.btnBack, onClick: () => setView('dashboard') }, '← Volver'),
+                    React.createElement('div', { style: s.header }, React.createElement('h2', { style: s.titulo }, 'Gasto')),
+                    React.createElement('div', { style: s.form },
+                        React.createElement('div', { style: s.grupo }, React.createElement('label', { style: s.label }, '💰 Monto'), React.createElement('input', { type: 'number', placeholder: '0.00', value: montoGasto, onChange: e => setMontoGasto(e.target.value), step: '0.01', min: '0', style: s.input })),
+                        React.createElement('div', { style: s.grupo }, React.createElement('label', { style: s.label }, '📝 Descripción'), React.createElement('input', { type: 'text', placeholder: 'Qué fue...', value: descripcion, onChange: e => setDescripcion(e.target.value), style: s.input })),
+                        React.createElement('div', { style: s.grupo }, React.createElement('label', { style: s.label }, '📁 Categoría'), React.createElement('select', { value: categoria, onChange: e => setCategoria(e.target.value), style: s.select }, categorias.map(c => React.createElement('option', { key: c, value: c }, c)))),
+                        React.createElement('div', { style: s.grupo }, React.createElement('label', { style: s.label }, '➕ Nueva'), React.createElement('div', { style: { display: 'flex', gap: '8px' } }, React.createElement('input', { type: 'text', placeholder: 'Nombre...', value: nuevaCategoria, onChange: e => setNuevaCategoria(e.target.value), style: { ...s.input, flex: 1, marginBottom: 0 } }), React.createElement('button', { style: { ...s.boton, ...s.btnSecondary, width: 'auto', flex: 0, margin: 0, padding: '10px' }, onClick: agregarCategoria }, 'Agregar'))),
+                        React.createElement('div', { style: s.grupo }, React.createElement('label', { style: s.label }, '📸 Foto'), !mostrarCamara && !foto ? React.createElement('button', { style: { ...s.boton, ...s.btnSecondary }, onClick: iniciarCamara }, '📷 Tomar') : mostrarCamara ? React.createElement('div', null, React.createElement('video', { ref: videoRef, autoPlay: true, playsInline: true, style: s.video }), React.createElement('div', { style: { display: 'flex', gap: '8px' } }, React.createElement('button', { style: { ...s.boton, ...s.btnPrimary }, onClick: tomarFoto }, '✓'), React.createElement('button', { style: { ...s.boton, ...s.btnSecondary }, onClick: () => { const stream = videoRef.current?.srcObject; if (stream) stream.getTracks().forEach(t => t.stop()); setMostrarCamara(false); } }, 'X'))) : React.createElement('div', null, React.createElement('img', { src: foto, alt: 'Ticket', style: s.img }), React.createElement('div', { style: { display: 'flex', gap: '8px' } }, React.createElement('button', { style: { ...s.boton, ...s.btnPrimary }, onClick: procesarOCR }, '🔍 Extraer'), React.createElement('button', { style: { ...s.boton, ...s.btnSecondary }, onClick: () => setFoto(null) }, 'Cambiar')))),
+                        React.createElement('canvas', { ref: canvasRef, style: { display: 'none' } }),
+                        React.createElement('button', { style: { ...s.boton, ...s.btnPrimary }, onClick: agregarGasto }, '✓ Guardar')
+                    )
+                );
+            }
+
+            if (view === 'ingreso') {
+                return React.createElement('div', { style: s.container },
+                    React.createElement('button', { style: s.btnBack, onClick: () => setView('dashboard') }, '← Volver'),
+                    React.createElement('div', { style: s.header }, React.createElement('h2', { style: s.titulo }, 'Ingreso'), React.createElement('p', { style: s.subtitulo }, 'Total: $' + totalIngresos.toFixed(2))),
+                    React.createElement('div', { style: s.form }, React.createElement('div', { style: s.grupo }, React.createElement('label', { style: s.label }, 'Monto'), React.createElement('input', { type: 'number', placeholder: '0.00', value: montoIngreso, onChange: e => setMontoIngreso(e.target.value), step: '0.01', min: '0', style: s.input })), React.createElement('button', { style: { ...s.boton, ...s.btnPrimary }, onClick: agregarIngreso }, '✓ Agregar')),
+                    React.createElement('div', { style: s.lista }, ingresosMes.length > 0 ? ingresosMes.slice().reverse().map(i => React.createElement('div', { key: i.id, style: s.item }, React.createElement('div', null, React.createElement('div', { style: { ...s.categoria, color: '#059669' } }, '💵'), React.createElement('div', { style: s.fecha }, i.fecha)), React.createElement('div', null, React.createElement('button', { style: { padding: '4px 8px', backgroundColor: '#FEE2E2', color: '#DC2626', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }, onClick: () => eliminarIngreso(i.id) }, '✕'), React.createElement('div', { style: { ...s.montoItem, color: '#059669', marginTop: '4px' } }, '+$' + i.monto.toFixed(2))))) : React.createElement('p', { style: { padding: '20px', textAlign: 'center' } }, 'Sin ingresos'))
+                );
+            }
+
+            if (view === 'reportes') {
+                return React.createElement('div', { style: s.container },
+                    React.createElement('button', { style: s.btnBack, onClick: () => setView('dashboard') }, '← Volver'),
+                    React.createElement('div', { style: s.header }, React.createElement('h2', { style: s.titulo }, 'Reportes'), React.createElement('p', { style: s.subtitulo }, new Date().toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }))),
+                    React.createElement('div', { style: s.grid }, React.createElement('div', { style: { ...s.card, ...s.cardGreen } }, React.createElement('div', null, 'Ingreso'), React.createElement('div', { style: s.monto }, '$' + totalIngresos.toFixed(2))), React.createElement('div', { style: { ...s.card, ...s.cardRed } }, React.createElement('div', null, 'Gasto'), React.createElement('div', { style: s.monto }, '$' + totalGastos.toFixed(2))), React.createElement('div', { style: { ...s.card, ...s.cardBlue } }, React.createElement('div', null, 'Saldo'), React.createElement('div', { style: { ...s.monto, color: saldo >= 0 ? '#059669' : '#DC2626' } }, '$' + saldo.toFixed(2)))),
+                    React.createElement('div', { style: { marginTop: '24px', backgroundColor: 'white', padding: '16px', borderRadius: '8px', marginBottom: '24px' } }, React.createElement('h3', { style: { fontSize: '16px', marginBottom: '12px', fontWeight: '600' } }, 'Por Categoría'), React.createElement('div', { style: s.lista }, Object.entries(gastosPorCategoria).filter(([_, m]) => m > 0).length > 0 ? Object.entries(gastosPorCategoria).filter(([_, m]) => m > 0).sort((a, b) => b[1] - a[1]).map(([cat, monto]) => React.createElement('div', { key: cat, style: { ...s.item, borderLeft: '4px solid #3B82F6' } }, React.createElement('div', null, React.createElement('div', { style: s.categoria }, cat), React.createElement('div', { style: s.fecha }, gastosMes.filter(g => g.categoria === cat).length + ' gasto(s)')), React.createElement('div', null, React.createElement('div', { style: s.montoItem }, '$' + monto.toFixed(2)), React.createElement('div', { style: { fontSize: '12px', color: '#6B7280' } }, totalGastos > 0 ? (monto / totalGastos * 100).toFixed(1) + '%' : '0%')))) : React.createElement('p', { style: { padding: '20px' } }, 'Sin gastos')))
+                );
+            }
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(GastoApp));
+    </script>
+</body>
+</html>
